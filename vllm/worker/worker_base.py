@@ -16,6 +16,8 @@ from vllm.utils import (enable_trace_function_call_for_thread,
                         update_environment_variables)
 from vllm.worker.model_runner_base import ModelRunnerBase, ModelRunnerInputBase
 
+import vllm.distributed.distributed_kv as dist_kv
+
 logger = init_logger(__name__)
 
 
@@ -270,11 +272,61 @@ class LocalOrDistributedWorkerBase(WorkerBase):
                 get_pp_group().recv_tensor_dict(
                     all_gather_group=get_tp_group()))
 
-        output = self.model_runner.execute_model(
-            model_input, self.kv_cache[worker_input.virtual_engine]
-            if self.kv_cache is not None else None, intermediate_tensors,
-            num_steps)
+        '''Jiayi Modification starts'''
+        kv_caches = self.kv_cache[worker_input.virtual_engine]
+        prefill_meta = model_input.attn_metadata.prefill_metadata
+        model_executable = self.model_runner.model
+        
+        # check if the current run is profiling
+        is_profile_run = (kv_caches is None) or (kv_caches[0] is None)
+        # check if the current run is prefill
+        is_prefill_run = prefill_meta is not None
+        # for disaggregated prefilling: allow bypassing model execution
+        bypass_model_exec = False
+        
+        # Recv kv cache for disaggregated prefill
+        # Skip model execution if all required KV cache are received
+        if all([
+            is_prefill_run,
+            dist_kv.IS_KV_DECODE_INSTANCE,
+            not is_profile_run]):
+            
+            hidden_or_intermediate_states, bypass = \
+                dist_kv.recv_kv_caches_and_hidden_states(
+                    model_executable,
+                    model_input,
+                    kv_caches,
+                )
+            if bypass:
+                bypass_model_exec = True
+        
+        if not bypass_model_exec: 
+            hidden_or_intermediate_states = self.model_runner.execute_model(
+                model_input, self.kv_cache[worker_input.virtual_engine]
+                if self.kv_cache is not None else None, intermediate_tensors,
+                num_steps)
+            
+        if all([
+            is_prefill_run,
+            dist_kv.IS_KV_PREFILL_INSTANCE,
+            not is_profile_run]):
+            
+            dist_kv.send_kv_caches_and_hidden_states(
+                model_executable,
+                model_input,
+                kv_caches,
+                hidden_or_intermediate_states,
+            )
+            
+        #if bypass_model_exec:
+        # Need to add the post processing part in `self.model_runner.execute_model`
+        output = self.model_runner.postprocess_model(
+            model_input,
+            hidden_or_intermediate_states,
+        )
 
+        '''Jiayi Modification ends here'''
+        
         if not get_pp_group().is_last_rank:
             # output is IntermediateTensors
             get_pp_group().send_tensor_dict(output.tensors,

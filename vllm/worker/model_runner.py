@@ -1371,6 +1371,7 @@ class ModelRunner(GPUModelRunnerBase[ModelInputForGPUWithSamplingMetadata]):
         # check if the current run is prefill
         is_prefill_run = prefill_meta is not None
         
+        '''
         # for disaggregated prefilling: allow bypassing model execution
         bypass_model_exec = False
         
@@ -1389,18 +1390,19 @@ class ModelRunner(GPUModelRunnerBase[ModelInputForGPUWithSamplingMetadata]):
                 )
             if bypass:
                 bypass_model_exec = True
-
-        if not bypass_model_exec:
-            hidden_or_intermediate_states = model_executable(
-            input_ids=model_input.input_tokens,
-            positions=model_input.input_positions,
-            kv_caches=kv_caches,
-            attn_metadata=model_input.attn_metadata,
-            intermediate_tensors=intermediate_tensors,
-            **MultiModalInputs.as_kwargs(multi_modal_kwargs,
-                                            device=self.device),
-            **seqlen_agnostic_kwargs)
+        '''
+        #if not bypass_model_exec:
+        hidden_or_intermediate_states = model_executable(
+        input_ids=model_input.input_tokens,
+        positions=model_input.input_positions,
+        kv_caches=kv_caches,
+        attn_metadata=model_input.attn_metadata,
+        intermediate_tensors=intermediate_tensors,
+        **MultiModalInputs.as_kwargs(multi_modal_kwargs,
+                                        device=self.device),
+        **seqlen_agnostic_kwargs)
         
+        '''
         # Send KV cache for disaggregated prefill
         if all([
             is_prefill_run,
@@ -1413,8 +1415,9 @@ class ModelRunner(GPUModelRunnerBase[ModelInputForGPUWithSamplingMetadata]):
                 kv_caches,
                 hidden_or_intermediate_states,
             )
-
-
+        '''
+        
+        '''
         # Compute the logits in the last pipeline stage.
         if not get_pp_group().is_last_rank:
             return hidden_or_intermediate_states
@@ -1432,6 +1435,47 @@ class ModelRunner(GPUModelRunnerBase[ModelInputForGPUWithSamplingMetadata]):
         )
 
 
+        if self.return_hidden_states:
+            # we only need to pass hidden states of most recent token
+            assert model_input.sampling_metadata is not None
+            indices = model_input.sampling_metadata.selected_token_indices
+            if model_input.is_prompt:
+                hidden_states = hidden_or_intermediate_states.index_select(
+                    0, indices)
+            elif decode_meta.use_cuda_graph:
+                hidden_states = hidden_or_intermediate_states[:len(indices)]
+            else:
+                hidden_states = hidden_or_intermediate_states
+
+            output.hidden_states = hidden_states
+
+        return [output], hidden_or_intermediate_states
+        '''
+        return hidden_or_intermediate_states
+
+    @torch.inference_mode()
+    def postprocess_model(
+        self,
+        model_input,
+        hidden_or_intermediate_states,
+        
+    ):
+        if not get_pp_group().is_last_rank:
+            return hidden_or_intermediate_states
+        
+        logits = self.model.compute_logits(hidden_or_intermediate_states,
+                                           model_input.sampling_metadata)
+
+        if not self.is_driver_worker:
+            return []
+
+        # Sample the next token.
+        output: SamplerOutput = self.model.sample(
+            logits=logits,
+            sampling_metadata=model_input.sampling_metadata,
+        )
+
+        decode_meta = model_input.attn_metadata.decode_metadata
         if self.return_hidden_states:
             # we only need to pass hidden states of most recent token
             assert model_input.sampling_metadata is not None
