@@ -80,7 +80,7 @@ def _add_sampling_metadata_broadcastable_dict(
         tensor_dict["selected_token_indices"] = (
             sampling_metadata.selected_token_indices)
 
-
+#@dataclasses.dataclass
 @dataclasses.dataclass(frozen=True)
 class ModelRunnerInputBase(ABC):
     """Local inputs to each worker's model runner. May contain

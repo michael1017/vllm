@@ -17,7 +17,6 @@ from vllm.utils import (enable_trace_function_call_for_thread,
 from vllm.worker.model_runner_base import ModelRunnerBase, ModelRunnerInputBase
 
 import vllm.distributed.distributed_kv as dist_kv
-import vllm.distributed.parallel_state as ps
 
 logger = init_logger(__name__)
 
@@ -287,31 +286,22 @@ class LocalOrDistributedWorkerBase(WorkerBase):
         # for disaggregated prefilling: allow bypassing model execution
         bypass_model_exec = False
         
-        print(f"Jiayi: this rank is {torch.distributed.get_rank()}")
         # Recv kv cache for disaggregated prefill
         # Skip model execution if all required KV cache are received
-        
-        print(f"Jiayi: before model input: {model_input}")
-        
-        # FIXME(Jiayi): is_prefix_hit is a hack for now, should be removed in the future
-        is_prefix_hit = False 
         if all([
             is_prefill_run,
-            dist_kv.IS_KV_DECODE_INSTANCE or dist_kv.IS_LMC_INSTANCE,
+            dist_kv.IS_KV_DECODE_INSTANCE,
             not is_profile_run]):
-            print("Jiayi: Start calling recv_kv_cache")
-            hidden_or_intermediate_states, bypass, model_input, is_prefix_hit = \
-                ps.get_disagg_group().recv_kv_caches_and_hidden_states(
+            
+            hidden_or_intermediate_states, bypass = \
+                dist.recv_kv_caches_and_hidden_states(
                     model_executable,
                     model_input,
                     kv_caches,
                 )
             if bypass:
                 bypass_model_exec = True
-        print(f"Jiayi: after model input: {model_input}")
-        # Modify model input to adpat to prefix caching
-        #print(self.kv_cache[worker_input.virtual_engine][0].shape)
-        #print(model_executable.config.hidden_size)
+
         if not bypass_model_exec: 
             hidden_or_intermediate_states = self.model_runner.execute_model(
                 model_input, self.kv_cache[worker_input.virtual_engine]
@@ -320,10 +310,10 @@ class LocalOrDistributedWorkerBase(WorkerBase):
             
         if all([
             is_prefill_run,
-            dist_kv.IS_KV_PREFILL_INSTANCE or dist_kv.IS_LMC_INSTANCE,
-            not is_profile_run]) and not is_prefix_hit:
-            print("Jiayi: Start calling send_kv_cache")
-            ps.get_disagg_group().send_kv_caches_and_hidden_states(
+            dist_kv.IS_KV_PREFILL_INSTANCE,
+            not is_profile_run]):
+            
+            dist.send_kv_caches_and_hidden_states(
                 model_executable,
                 model_input,
                 kv_caches,

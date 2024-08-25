@@ -191,10 +191,11 @@ def init_distributed_environment(
         # this backend is used for WORLD
         maybe_disagg_world_size = world_size
         maybe_disagg_rank = rank
-        if dist_kv.IS_DISTRIBUTED_KV_INSTANCE:
+        if dist_kv.IS_DISTRIBUTED_KV_INSTANCE or dist_kv.IS_LMC_INSTANCE:
             maybe_disagg_world_size = world_size * 2
             logger.debug("Disaggregated prefill enabled.")
-            if dist_kv.IS_KV_PREFILL_INSTANCE:
+            
+            if dist_kv.IS_KV_PREFILL_INSTANCE or dist_kv.IS_LMC_INSTANCE:
                 # for prefill, the ranks are [0, world_size)
                 maybe_disagg_rank = rank
             else:
@@ -211,7 +212,7 @@ def init_distributed_environment(
             init_method=distributed_init_method,
             world_size=maybe_disagg_world_size,
             rank=maybe_disagg_rank)
-        logger.debug("torch.distributed initialized")
+        logger.debug(f"torch.distributed initialized {backend} {distributed_init_method} world_size:{maybe_disagg_world_size} rank:{maybe_disagg_rank}")
     # set the local rank
     # local_rank is not available in torch ProcessGroup,
     # see https://github.com/pytorch/pytorch/issues/122816
@@ -238,7 +239,6 @@ def init_distributed_environment(
     else:
         assert _WORLD.world_size == torch.distributed.get_world_size(), (
             "world group already initialized with a different world size")
-
 
 def initialize_model_parallel(
     tensor_model_parallel_size: int = 1,
@@ -289,7 +289,7 @@ def initialize_model_parallel(
     world_size: int = torch.distributed.get_world_size()
     backend = backend or torch.distributed.get_backend(
         get_world_group().device_group)
-    if dist_kv.IS_DISTRIBUTED_KV_INSTANCE:
+    if dist_kv.IS_DISTRIBUTED_KV_INSTANCE or dist_kv.IS_LMC_INSTANCE:
         # Disaggregated prefill enabled
         # The world_size for this vLLM instance is tp * pp, but torch.distributed contains 2 vLLM instances, its world size is 2 * tp * pp
         # Adjust the world_size to match.
@@ -305,6 +305,8 @@ def initialize_model_parallel(
     # Build the tensor model-parallel groups.
     num_tensor_model_parallel_groups: int = (world_size //
                                              tensor_model_parallel_size)
+
+
     global _TP
     assert _TP is None, ("tensor model parallel group is already initialized")
     group_ranks = []
@@ -340,8 +342,8 @@ def initialize_model_parallel(
                                     backend,
                                     use_custom_allreduce=False)
     logger.debug("_PP initialized for rank %d", torch.distributed.get_rank())
-
-    if dist_kv.IS_DISTRIBUTED_KV_INSTANCE:
+    
+    if dist_kv.IS_DISTRIBUTED_KV_INSTANCE or dist_kv.IS_LMC_INSTANCE:
         global _DISAGG
         logger.debug("Disaggregated prefill enabled, create _DISAGG group")
         group_ranks = []
@@ -357,12 +359,16 @@ def initialize_model_parallel(
         )
         # follow by a warmup, to warmup nccl
         # necessary, as NCCL may not be warmed up when tp and pp are both 1.
+        
+        # FIXME (Jiayi): do not warm up for now
+        '''
         temp_tensor = torch.tensor([1.]).to(_DISAGG.device)
         if dist_kv.IS_KV_PREFILL_INSTANCE:
             _DISAGG.send(temp_tensor)
         else:
             recv_tensor = _DISAGG.recv(temp_tensor.shape, temp_tensor.dtype)
             assert torch.allclose(temp_tensor, recv_tensor)
+        '''
         logger.debug("_DISAGG initialized for rank %d",
                      torch.distributed.get_rank())
 

@@ -82,7 +82,7 @@ _NUM_WARMUP_ITERS = 2
 
 TModelInputForGPU = TypeVar('TModelInputForGPU', bound="ModelInputForGPU")
 
-
+#@dataclasses.dataclass
 @dataclass(frozen=True)
 class ModelInputForGPU(ModelRunnerInputBase):
     """
@@ -132,7 +132,7 @@ class ModelInputForGPU(ModelRunnerInputBase):
                 attn_backend, tensor_dict)
         return cls(**tensor_dict)
 
-
+#@dataclasses.dataclass
 @dataclass(frozen=True)
 class ModelInputForGPUWithSamplingMetadata(ModelInputForGPU):
     """
@@ -364,7 +364,6 @@ class ModelInputForGPUBuilder(ModelRunnerInputBuilderBase[ModelInputForGPU]):
         remaining blocks.
         """
         computed_block_nums = inter_data.computed_block_nums
-
         # Note that prefix caching does not support sliding window.
         prefix_cache_hit = (computed_block_nums is not None
                             and len(computed_block_nums) > 0
@@ -374,7 +373,7 @@ class ModelInputForGPUBuilder(ModelRunnerInputBuilderBase[ModelInputForGPU]):
         if self.chunked_prefill_enabled and prefix_cache_hit:
             raise RuntimeError(
                 "chunked prefill cannot be used with prefix caching now.")
-
+        
         # If prefix cache is hit, advance context length to bypass
         # hit blocks. Accordingly, input tokens, position and query length
         # have to be updated.

@@ -98,19 +98,24 @@ class GroupCoordinator:
         self.local_rank = local_rank
         self.device_group = None
         self.cpu_group = None
-
+        
         for ranks in group_ranks:
+            print(f"Jiayi: rank {self.rank} has cpu_group ranks: {ranks}")
+            print(f"Jiayi: device backend {torch_distributed_backend}")
             device_group = torch.distributed.new_group(
                 ranks, backend=torch_distributed_backend)
+            print(f"Jiayi: device backend initialized")
             # a group with `gloo` backend, to allow direct coordination between
             # processes through the CPU.
             cpu_group = torch.distributed.new_group(ranks, backend="gloo")
+            print(f"Jiayi: cpu backend initialized")
             if self.rank in ranks:
                 self.ranks = ranks
                 self.world_size = len(ranks)
                 self.rank_in_group = ranks.index(self.rank)
                 self.device_group = device_group
                 self.cpu_group = cpu_group
+                
 
         assert self.cpu_group is not None
         assert self.device_group is not None

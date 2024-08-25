@@ -16,32 +16,20 @@ wait_for_server() {
 }
 
 # prefilling instance
-VLLM_LOGGING_LEVEL=DEBUG VLLM_RPC_PORT=5570 VLLM_DISAGG_PREFILL_ROLE=prefill CUDA_VISIBLE_DEVICES=0 python3 \
+VLLM_LOGGING_LEVEL=DEBUG VLLM_RPC_PORT=5570 CUDA_VISIBLE_DEVICES=1 python3 \
     -m vllm.entrypoints.openai.api_server \
     --model meta-llama/Meta-Llama-3.1-8B-Instruct \
     --port 8100 \
     --max-model-len 5000 \
     --gpu-memory-utilization 0.4 &
 
-# decoding instance
-VLLM_LOGGING_LEVEL=DEBUG VLLM_RPC_PORT=5580 VLLM_DISAGG_PREFILL_ROLE=decode CUDA_VISIBLE_DEVICES=1 python3 \
-    -m vllm.entrypoints.openai.api_server \
-    --model meta-llama/Meta-Llama-3.1-8B-Instruct \
-    --port 8200 \
-    --max-model-len 5000 \
-    --gpu-memory-utilization 0.4 &
 
 # wait until prefill and decode instances are ready
 wait_for_server 8100
-wait_for_server 8200
-echo 111111111111111111
 
-# launch a proxy server that opens the service at port 8000
-python3 ../../benchmarks/disagg_benchmarks/disagg_prefill_proxy_server.py &
-sleep 1
 
 # serve an example request
-curl http://localhost:8000/v1/completions \
+curl http://localhost:8100/v1/completions \
 -H "Content-Type: application/json" \
 -d '{
 "model": "meta-llama/Meta-Llama-3.1-8B-Instruct",
